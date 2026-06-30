@@ -632,11 +632,56 @@ if not guided_complete:
     )
     st.stop()
 
+st.divider()
+st.header("Choose your learning mode")
+st.write(
+    "Follow Modes 1 → 2 → 3 for the complete experiment. Mode 4 can be opened "
+    "at any time to connect the classroom model to real QKD systems."
+)
+mode_columns = st.columns(4)
+with mode_columns[0]:
+    with st.container(border=True):
+        st.markdown("### 🟢 1. No Eve")
+        st.write(
+            "Establish the baseline. Observe errors caused only by the selected channel "
+            "noise, test a public sample, and calculate its QBER."
+        )
+with mode_columns[1]:
+    with st.container(border=True):
+        st.markdown("### 🕵️ 2. Eve attack")
+        st.write(
+            "Introduce intercept-resend eavesdropping. See how Eve's measurements "
+            "disturb the photon stream and alter the sample QBER."
+        )
+with mode_columns[2]:
+    with st.container(border=True):
+        st.markdown("### 📊 3. Compare")
+        st.write(
+            "Compare the baseline and attack results. This mode unlocks after both QBER "
+            "checkpoints are completed, so it cannot reveal answers early."
+        )
+with mode_columns[3]:
+    with st.container(border=True):
+        st.markdown("### 🌍 4. Real QKD")
+        st.write(
+            "Review what this idealised simulator teaches and which security, hardware, "
+            "and post-processing steps a real QKD system still requires."
+        )
+
 tab_no_eve, tab_eve, tab_compare, tab_reality = st.tabs(
-    ["No Eve", "Eve intercept-resend", "Compare and chart", "From classroom to real QKD"]
+    [
+        "🟢 1. No Eve",
+        "🕵️ 2. Eve attack",
+        "📊 3. Compare",
+        "🌍 4. Real QKD",
+    ]
 )
 
 with tab_no_eve:
+    st.info(
+        "Mode 1 — Baseline: no eavesdropper is present. Any observed errors come from "
+        "the selected inherent channel error probability."
+    )
     st.subheader(f"Alice → noisy channel ({noise_percent}%) → Bob")
     metric_row(no_eve, no_eve_estimate)
     with st.expander("4. Basis sifting", expanded=True):
@@ -681,6 +726,10 @@ with tab_no_eve:
     )
 
 with tab_eve:
+    st.info(
+        "Mode 2 — Attack: Eve measures and resends selected photons. Compare this mode's "
+        "sample QBER with the no-Eve baseline to see the disturbance she introduces."
+    )
     st.subheader(
         f"Alice → Eve intercepts {eve_count:,} photons ({100 * eve_count / N_BITS:.1f}%) → Bob"
     )
@@ -768,7 +817,39 @@ with tab_eve:
                     "Real Alice and Bob cannot label or causally separate individual errors."
                 )
 
+with tab_reality:
+    st.info(
+        "Mode 4 — Real-world context: use this mode at any time. It explains which parts "
+        "of BB84 are represented here and which production requirements are deliberately omitted."
+    )
+    st.subheader("What this model teaches—and what it leaves out")
+    st.markdown(
+        """
+This simulator isolates the central BB84 idea: measuring an unknown quantum state can
+disturb it, and Alice and Bob can detect excess disturbance statistically. It is deliberately
+not cryptographic production software.
+
+A real QKD system also needs:
+
+- **Authenticated classical communication** so Eve cannot impersonate Alice or Bob.
+- **Error correction** to reconcile the sifted keys without leaking too much information.
+- **Privacy amplification** to compress away Eve's possible information.
+- **Finite-key analysis** because real security claims use finite statistical samples.
+- **Decoy states** in practical weak-pulse systems to expose photon-number-splitting attacks.
+- **Loss, detector, source, timing, and device models**, including side-channel assumptions.
+- **Composable security proofs and certified randomness**, plus careful key management.
+
+The familiar 11% threshold is a teaching reference associated with ideal one-way BB84
+security analyses. A deployed system's acceptance rule must come from its complete protocol,
+finite-key proof, hardware model, and security parameters—not from this slider alone.
+        """
+    )
+
 with tab_compare:
+    st.info(
+        "Mode 3 — Comparison: place the baseline and Eve-attack results side by side. "
+        "Complete the QBER checkpoint in Modes 1 and 2 to unlock the charts."
+    )
     if not (no_eve_qber_complete and eve_qber_complete):
         st.info(
             "Complete the QBER checkpoint in both the No Eve and Eve tabs to unlock "
@@ -873,30 +954,6 @@ with tab_compare:
         "sample at each point. The orange line is the ideal expectation, including the "
         "selected channel noise; the dashed red line is the current abort threshold. "
         "Smaller finite samples fluctuate more widely around the expectation."
-    )
-
-with tab_reality:
-    st.subheader("What this model teaches—and what it leaves out")
-    st.markdown(
-        """
-This simulator isolates the central BB84 idea: measuring an unknown quantum state can
-disturb it, and Alice and Bob can detect excess disturbance statistically. It is deliberately
-not cryptographic production software.
-
-A real QKD system also needs:
-
-- **Authenticated classical communication** so Eve cannot impersonate Alice or Bob.
-- **Error correction** to reconcile the sifted keys without leaking too much information.
-- **Privacy amplification** to compress away Eve's possible information.
-- **Finite-key analysis** because real security claims use finite statistical samples.
-- **Decoy states** in practical weak-pulse systems to expose photon-number-splitting attacks.
-- **Loss, detector, source, timing, and device models**, including side-channel assumptions.
-- **Composable security proofs and certified randomness**, plus careful key management.
-
-The familiar 11% threshold is a teaching reference associated with ideal one-way BB84
-security analyses. A deployed system's acceptance rule must come from its complete protocol,
-finite-key proof, hardware model, and security parameters—not from this slider alone.
-        """
     )
 
 st.divider()

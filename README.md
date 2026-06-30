@@ -21,6 +21,13 @@ shows the smaller unrevealed candidate key that would continue to error
 correction and privacy amplification. It also explicitly distinguishes the
 channel's inherent error probability from the maximum accepted QBER.
 
+The post-checkpoint interface presents four clearly signposted learning modes:
+
+1. **No Eve** establishes the channel-noise baseline.
+2. **Eve attack** demonstrates intercept-resend disturbance.
+3. **Compare** contrasts both completed experiments and their QBER estimates.
+4. **Real QKD** explains the boundaries of the classroom model.
+
 This is an idealised educational model, not a production QKD implementation.
 
 ## Run locally

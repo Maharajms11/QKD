@@ -68,6 +68,22 @@ class TeachingInterfaceTests(unittest.TestCase):
         self.assertTrue(
             any("Checkpoint complete" in message.value for message in app.success)
         )
+        self.assertIn("Choose your learning mode", [header.value for header in app.header])
+        self.assertEqual(
+            [tab.label for tab in app.tabs],
+            [
+                "🟢 1. No Eve",
+                "🕵️ 2. Eve attack",
+                "📊 3. Compare",
+                "🌍 4. Real QKD",
+            ],
+        )
+        self.assertTrue(
+            any(
+                subheader.value == "What this model teaches—and what it leaves out"
+                for subheader in app.subheader
+            )
+        )
         checkpoint_labels = [expander.label for expander in app.expander]
         self.assertIn("6. Student QBER checkpoint", checkpoint_labels)
         self.assertIn("7. Student QBER checkpoint", checkpoint_labels)
