@@ -4,6 +4,39 @@ from streamlit.testing.v1 import AppTest
 
 
 class TeachingInterfaceTests(unittest.TestCase):
+    def test_guided_practice_can_be_skipped_and_resumed(self):
+        app = AppTest.from_file("app.py").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+
+        next(
+            button
+            for button in app.button
+            if button.label == "Skip guided practice and continue"
+        ).click()
+        app.run(timeout=30)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertIn("Choose your learning mode", [header.value for header in app.header])
+        self.assertTrue(
+            any("Guided practice skipped" in message.value for message in app.info)
+        )
+        self.assertEqual(len(app.tabs), 4)
+
+        next(
+            button
+            for button in app.button
+            if button.label == "Return to the five-photon practice"
+        ).click()
+        app.run(timeout=30)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(
+            any(
+                radio.label.startswith("What kind of output should Bob obtain")
+                for radio in app.radio
+            )
+        )
+
     def test_wrong_measurement_answer_gives_a_hint_and_allows_retry(self):
         app = AppTest.from_file("app.py").run(timeout=30)
         alice_bit = next(

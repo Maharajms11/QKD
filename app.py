@@ -76,20 +76,50 @@ def guided_measurement_lab(
     result,
     seed: int,
 ) -> bool:
-    """Require students to reason through the first few measurements."""
+    """Offer optional guided reasoning through the first few measurements."""
 
     signature = f"{seed}"
     progress_key = f"guided_progress_{signature}"
     feedback_key = f"guided_feedback_{signature}"
+    skipped_key = f"guided_skipped_{signature}"
     st.session_state.setdefault(progress_key, 0)
+    st.session_state.setdefault(skipped_key, False)
     progress = min(int(st.session_state[progress_key]), GUIDED_PHOTONS)
 
-    st.subheader("Your turn: predict Bob's first measurements")
+    st.subheader("Optional practice: predict Bob's first measurements")
     st.write(
         "Work through the first five photons. Choose `0` or `1` when Bob's basis makes "
         "the result predictable; choose **Random (0 or 1)** when the bases differ. "
-        "After each correct answer, the simulator reveals the sampled measurement."
+        "After each correct answer, the simulator reveals the sampled measurement. "
+        "If you are already comfortable with this process, you may skip directly to "
+        "the learning modes."
     )
+
+    if bool(st.session_state[skipped_key]):
+        st.info(
+            "Guided practice skipped. All 1,000 measurement outputs are available below."
+        )
+        if st.button(
+            "Return to the five-photon practice",
+            key=f"resume_guided_{signature}",
+        ):
+            st.session_state[skipped_key] = False
+            st.rerun()
+        return True
+
+    if progress < GUIDED_PHOTONS:
+        if st.button(
+            "Skip guided practice and continue",
+            key=f"skip_guided_{signature}",
+            width="stretch",
+        ):
+            st.session_state[skipped_key] = True
+            st.rerun()
+        st.caption(
+            "Skipping does not change the simulation. You can return to this practice "
+            "later without generating a new exchange."
+        )
+
     st.progress(
         progress / GUIDED_PHOTONS,
         text=f"{progress} of {GUIDED_PHOTONS} photons completed",
@@ -627,8 +657,8 @@ guided_complete = guided_measurement_lab(
 )
 if not guided_complete:
     st.info(
-        "Complete the five-photon checkpoint to unlock the automatically generated "
-        "exchange, Eve scenario, QBER exercises, and comparison charts."
+        "Complete the optional five-photon practice—or use the skip button—to continue "
+        "to the learning modes, QBER exercises, and comparison charts."
     )
     st.stop()
 

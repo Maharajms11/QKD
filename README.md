@@ -7,11 +7,12 @@ QBER detection, and classroom charts.
 
 ## Interactive learning workflow
 
-Before the simulator reveals the full exchange, students must work through the
-first five photons. For each photon they compare Alice's preparation basis with
-Bob's random measurement basis and predict either a definite bit or a genuinely
-random outcome. Incorrect answers receive progressively clearer hints and can be
-retried.
+Students may work through the first five photons as optional guided practice. For
+each photon they compare Alice's preparation basis with Bob's random measurement
+basis and predict either a definite bit or a genuinely random outcome. Incorrect
+answers receive progressively clearer hints and can be retried. Students who are
+already comfortable with measurement bases can bypass the practice and return to
+it later without changing the simulated exchange.
 
 After the remaining measurements are generated, Alice and Bob randomly select a
 student-configurable percentage of their sifted key for public comparison.
