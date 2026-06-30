@@ -123,6 +123,42 @@ def photon_state_labels(states: np.ndarray) -> np.ndarray:
     return np.array([labels[int(state)] for state in states], dtype=object)
 
 
+def predictable_measurement_bit(
+    received_bit: int,
+    received_basis: str,
+    measurement_basis: str,
+) -> int | None:
+    """Return the predictable bit, or ``None`` for a random measurement.
+
+    In BB84 a measurement in the preparation basis returns the encoded bit.
+    A measurement in the other basis can return either bit with equal
+    probability, so asking a learner to guess one exact value would be
+    misleading.
+    """
+
+    if received_bit not in (0, 1):
+        raise ValueError("received_bit must be 0 or 1")
+    if received_basis not in VALID_BASES:
+        raise ValueError("received_basis must be '+' or 'x'")
+    if measurement_basis not in VALID_BASES:
+        raise ValueError("measurement_basis must be '+' or 'x'")
+    return int(received_bit) if received_basis == measurement_basis else None
+
+
+def calculate_qber_from_counts(error_count: int, sifted_count: int) -> float:
+    """Calculate QBER percentage from classroom-visible aggregate counts."""
+
+    if error_count < 0:
+        raise ValueError("error_count must be non-negative")
+    if sifted_count < 0:
+        raise ValueError("sifted_count must be non-negative")
+    if error_count > sifted_count:
+        raise ValueError("error_count cannot exceed sifted_count")
+    if sifted_count == 0:
+        return 0.0
+    return 100.0 * error_count / sifted_count
+
+
 def simulate_eve_intercept_resend(
     alice_bits: np.ndarray,
     alice_bases: np.ndarray,
@@ -325,4 +361,3 @@ def expected_qber(interception_fraction: float, channel_noise: float) -> float:
         raise ValueError("channel_noise must be between 0 and 1")
     eve_error = interception_fraction / 4.0
     return 100.0 * (channel_noise + eve_error - 2.0 * channel_noise * eve_error)
-

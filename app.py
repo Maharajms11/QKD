@@ -11,16 +11,20 @@ import streamlit as st
 
 from bb84 import (
     calculate_qber,
+    calculate_qber_from_counts,
     expected_qber,
     generate_bases,
     generate_bits,
     photon_state_labels,
+    predictable_measurement_bit,
     run_protocol,
 )
 
 
 N_BITS = 1000
 SAMPLE_ROWS = 30
+GUIDED_PHOTONS = 5
+RANDOM_ANSWER = "Random (0 or 1)"
 
 
 def prepare_exchange(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -36,6 +40,154 @@ def prepare_exchange(seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def yes_no(values: np.ndarray) -> list[str]:
     return ["Yes" if bool(value) else "No" for value in values]
+
+
+def conceptual_measurement_answer(bit: int, alice_basis: str, bob_basis: str) -> str:
+    """Return the classroom answer for a BB84 measurement prediction."""
+
+    predictable = predictable_measurement_bit(bit, alice_basis, bob_basis)
+    return RANDOM_ANSWER if predictable is None else str(predictable)
+
+
+def measurement_hint(bit: int, alice_basis: str, bob_basis: str, attempt: int) -> str:
+    """Give progressively more explicit feedback without penalising randomness."""
+
+    bases_match = alice_basis == bob_basis
+    if bases_match:
+        hints = [
+            "Compare Alice's preparation basis with Bob's measurement basis. They match.",
+            "With matching bases, Bob recovers the bit Alice encoded.",
+            f"Alice encoded bit {bit}; use that same bit as the predictable output.",
+        ]
+    else:
+        hints = [
+            "Compare Alice's preparation basis with Bob's measurement basis. They differ.",
+            "A measurement in the wrong basis has no single predictable bit value.",
+            f"Choose “{RANDOM_ANSWER}”. The simulator will then reveal the sampled bit.",
+        ]
+    return hints[min(attempt - 1, len(hints) - 1)]
+
+
+def guided_measurement_lab(
+    alice_bits: np.ndarray,
+    alice_bases: np.ndarray,
+    bob_bases: np.ndarray,
+    result,
+    seed: int,
+) -> bool:
+    """Require students to reason through the first few measurements."""
+
+    signature = f"{seed}"
+    progress_key = f"guided_progress_{signature}"
+    feedback_key = f"guided_feedback_{signature}"
+    st.session_state.setdefault(progress_key, 0)
+    progress = min(int(st.session_state[progress_key]), GUIDED_PHOTONS)
+
+    st.subheader("Your turn: predict Bob's first measurements")
+    st.write(
+        "Work through the first five photons. Choose `0` or `1` when Bob's basis makes "
+        "the result predictable; choose **Random (0 or 1)** when the bases differ. "
+        "After each correct answer, the simulator reveals the sampled measurement."
+    )
+    st.progress(
+        progress / GUIDED_PHOTONS,
+        text=f"{progress} of {GUIDED_PHOTONS} photons completed",
+    )
+
+    if progress:
+        completed = np.arange(progress)
+        history = pd.DataFrame(
+            {
+                "Photon": completed + 1,
+                "Alice bit": alice_bits[completed],
+                "Alice basis": alice_bases[completed],
+                "Bob basis": bob_bases[completed],
+                "Conceptual answer": [
+                    conceptual_measurement_answer(
+                        int(alice_bits[i]), str(alice_bases[i]), str(bob_bases[i])
+                    )
+                    for i in completed
+                ],
+                "Sampled bit before channel error": result.bob.measured_bits_before_noise[
+                    completed
+                ],
+                "Channel flipped it?": yes_no(result.bob.noise_flips[completed]),
+                "Final measured bit": result.bob.measured_bits[completed],
+            }
+        )
+        st.dataframe(history, hide_index=True, width="stretch")
+
+    feedback = st.session_state.get(feedback_key)
+    if feedback:
+        if feedback["kind"] == "success":
+            st.success(feedback["text"])
+        else:
+            st.warning(feedback["text"])
+
+    if progress >= GUIDED_PHOTONS:
+        st.success(
+            "Checkpoint complete. The simulator has now generated the remaining "
+            f"{N_BITS - GUIDED_PHOTONS:,} measurement outputs."
+        )
+        return True
+
+    i = progress
+    bit = int(alice_bits[i])
+    alice_basis = str(alice_bases[i])
+    bob_basis = str(bob_bases[i])
+    state_label = str(photon_state_labels(np.array([result.alice_states[i]]))[0])
+
+    st.markdown(f"#### Photon {i + 1}")
+    prompt_columns = st.columns(4)
+    prompt_columns[0].metric("Alice's bit", bit)
+    prompt_columns[1].metric("Alice's basis", alice_basis)
+    prompt_columns[2].metric("Photon state", state_label)
+    prompt_columns[3].metric("Bob's random basis", bob_basis)
+
+    answer_key = f"guided_answer_{signature}_{i}"
+    attempt_key = f"guided_attempts_{signature}_{i}"
+    answer = st.radio(
+        "What kind of output should Bob obtain before channel error is applied?",
+        options=["0", "1", RANDOM_ANSWER],
+        index=None,
+        horizontal=True,
+        key=answer_key,
+    )
+    if st.button("Check my answer", type="primary", key=f"check_{signature}_{i}"):
+        if answer is None:
+            st.session_state[feedback_key] = {
+                "kind": "hint",
+                "text": "Choose an answer first, then check it.",
+            }
+        else:
+            expected = conceptual_measurement_answer(bit, alice_basis, bob_basis)
+            if answer == expected:
+                before_noise = int(result.bob.measured_bits_before_noise[i])
+                final_bit = int(result.bob.measured_bits[i])
+                noise_note = (
+                    f" The channel then flipped it to {final_bit}."
+                    if bool(result.bob.noise_flips[i])
+                    else " The channel did not flip it."
+                )
+                st.session_state[progress_key] = progress + 1
+                st.session_state[feedback_key] = {
+                    "kind": "success",
+                    "text": (
+                        f"Correct. The simulator sampled output {before_noise}."
+                        f"{noise_note}"
+                    ),
+                }
+            else:
+                attempts = int(st.session_state.get(attempt_key, 0)) + 1
+                st.session_state[attempt_key] = attempts
+                st.session_state[feedback_key] = {
+                    "kind": "hint",
+                    "text": "Not quite. "
+                    + measurement_hint(bit, alice_basis, bob_basis, attempts)
+                    + " Try again.",
+                }
+        st.rerun()
+    return False
 
 
 def sample_table(result, include_eve: bool = False) -> pd.DataFrame:
@@ -112,7 +264,7 @@ def qber_sweep(channel_noise: float, base_seed: int, trials: int = 16) -> pd.Dat
     return pd.DataFrame(records)
 
 
-def metric_row(result, include_eve: bool = False) -> None:
+def metric_row(result, include_eve: bool = False, reveal_qber: bool = False) -> None:
     """Render the principal numbers for an exchange."""
 
     columns = st.columns(6 if include_eve else 5)
@@ -120,15 +272,18 @@ def metric_row(result, include_eve: bool = False) -> None:
     columns[1].metric("Basis matches", f"{int(result.sift_mask.sum()):,}")
     columns[2].metric("Sifted key", f"{len(result.sifted_alice_key):,} bits")
     columns[3].metric("Sifted errors", f"{int(result.sifted_errors.sum()):,}")
-    columns[4].metric("Observed QBER", f"{result.qber:.2f}%")
+    columns[4].metric(
+        "Observed QBER",
+        f"{result.qber:.2f}%" if reveal_qber else "Calculate it below",
+    )
     if include_eve:
         columns[5].metric("Eve intercepted", f"{int(result.eve.intercepted.sum()):,}")
 
 
-def detection_panel(qber: float, threshold: float) -> None:
+def detection_panel(qber: float, threshold: float, step_number: int = 7) -> None:
     """Apply the user-selected classroom abort rule."""
 
-    with st.expander("7. QBER-based detection", expanded=True):
+    with st.expander(f"{step_number}. QBER-based detection", expanded=True):
         st.write(
             f"Alice and Bob compare a sample of their sifted key. This simulator "
             f"compares the complete sifted key for visibility. The abort threshold is "
@@ -140,6 +295,128 @@ def detection_panel(qber: float, threshold: float) -> None:
             st.success(
                 "QBER below threshold: proceed to error correction and privacy amplification."
             )
+
+
+def qber_learning_panel(
+    result,
+    threshold: float,
+    noise_percent: int,
+    seed: int,
+    scenario_key: str,
+    step_number: int,
+) -> bool:
+    """Require a QBER calculation and threshold decision before revealing the answer."""
+
+    error_count = int(result.sifted_errors.sum())
+    sifted_count = len(result.sifted_alice_key)
+    expected = calculate_qber_from_counts(error_count, sifted_count)
+    signature = (
+        f"{scenario_key}_{seed}_{noise_percent}_{error_count}_{sifted_count}_"
+        f"{threshold:.1f}"
+    ).replace(".", "_")
+    calculation_key = f"qber_calculation_correct_{signature}"
+    calculation_attempts_key = f"qber_calculation_attempts_{signature}"
+    decision_key = f"qber_decision_correct_{signature}"
+    decision_attempts_key = f"qber_decision_attempts_{signature}"
+    st.session_state.setdefault(calculation_key, False)
+    st.session_state.setdefault(decision_key, False)
+
+    with st.expander(f"{step_number}. Student QBER checkpoint", expanded=True):
+        st.info(
+            f"Machine settings: **{noise_percent}% inherent channel error probability** "
+            f"and **{threshold:.1f}% maximum accepted QBER**. These are different: the "
+            "first creates background errors; the second is the accept/abort rule."
+        )
+        st.write(
+            f"Alice and Bob found **{error_count} errors** among **{sifted_count} sifted "
+            "bits**. Calculate the observed quantum bit error rate."
+        )
+        st.latex(r"\mathrm{QBER}(\%)=\frac{\text{number of errors}}{\text{sifted bits}}\times100")
+
+        if not st.session_state[calculation_key]:
+            learner_qber = st.number_input(
+                "Your calculated QBER (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=None,
+                step=0.01,
+                format="%.2f",
+                key=f"qber_input_{signature}",
+                placeholder="Enter a percentage",
+            )
+            if st.button(
+                "Check my QBER",
+                type="primary",
+                key=f"check_qber_{signature}",
+            ):
+                if learner_qber is None:
+                    st.warning("Enter your calculated percentage before checking it.")
+                elif abs(float(learner_qber) - expected) <= 0.05:
+                    st.session_state[calculation_key] = True
+                    st.rerun()
+                else:
+                    attempts = int(st.session_state.get(calculation_attempts_key, 0)) + 1
+                    st.session_state[calculation_attempts_key] = attempts
+                    if attempts == 1:
+                        st.warning(
+                            f"Not quite. Substitute the counts: {error_count} ÷ "
+                            f"{sifted_count} × 100. Try again."
+                        )
+                    elif attempts == 2:
+                        fraction = error_count / sifted_count if sifted_count else 0.0
+                        st.warning(
+                            f"First, {error_count} ÷ {sifted_count} = {fraction:.4f}. "
+                            "Now convert that decimal to a percentage and try again."
+                        )
+                    else:
+                        st.warning(
+                            "Multiply the decimal by 100 and round the result to two "
+                            "decimal places. Try again."
+                        )
+            return False
+
+        st.success(
+            f"Correct: {error_count} ÷ {sifted_count} × 100 = **{expected:.2f}%**."
+        )
+
+        if not st.session_state[decision_key]:
+            decision = st.radio(
+                f"The machine accepts at or below {threshold:.1f}% QBER. What should it do?",
+                options=[
+                    "Proceed — QBER is acceptable",
+                    "Abort — QBER is too high",
+                ],
+                index=None,
+                key=f"decision_input_{signature}",
+            )
+            if st.button(
+                "Check my decision",
+                type="primary",
+                key=f"check_decision_{signature}",
+            ):
+                should_abort = expected > threshold
+                expected_decision = (
+                    "Abort — QBER is too high"
+                    if should_abort
+                    else "Proceed — QBER is acceptable"
+                )
+                if decision == expected_decision:
+                    st.session_state[decision_key] = True
+                    st.rerun()
+                else:
+                    attempts = int(st.session_state.get(decision_attempts_key, 0)) + 1
+                    st.session_state[decision_attempts_key] = attempts
+                    relation = "greater than" if should_abort else "not greater than"
+                    st.warning(
+                        f"Compare the values directly: {expected:.2f}% is {relation} "
+                        f"the {threshold:.1f}% limit. Try again."
+                    )
+            return False
+
+        st.success("Correct security decision.")
+
+    detection_panel(expected, threshold, step_number + 1)
+    return True
 
 
 st.set_page_config(
@@ -176,7 +453,7 @@ with st.sidebar:
         st.session_state.exchange_seed = int(seed)
 
     noise_percent = st.radio(
-        "Channel noise level",
+        "Inherent channel error probability",
         options=[0, 1, 2, 5, 10],
         horizontal=True,
         format_func=lambda value: f"{value}%",
@@ -191,14 +468,17 @@ with st.sidebar:
         help="Eve measures and resends exactly this many of the 1,000 photons.",
     )
     threshold = st.slider(
-        "QBER abort threshold",
+        "Maximum accepted QBER",
         min_value=0.0,
         max_value=25.0,
         value=11.0,
         step=0.5,
         format="%.1f%%",
     )
-    st.caption("Controls update both scenarios immediately.")
+    st.caption(
+        "The inherent error setting creates background errors. The QBER limit is the "
+        "separate accept/abort rule. Controls update both scenarios immediately."
+    )
 
 channel_noise = noise_percent / 100.0
 alice_bits, alice_bases, bob_bases = prepare_exchange(int(seed))
@@ -250,6 +530,21 @@ with stage_c:
         )
         st.code("First 24 bases:\n" + "".join(bob_bases[:24]), language=None)
 
+st.divider()
+guided_complete = guided_measurement_lab(
+    alice_bits,
+    alice_bases,
+    bob_bases,
+    no_eve,
+    int(seed),
+)
+if not guided_complete:
+    st.info(
+        "Complete the five-photon checkpoint to unlock the automatically generated "
+        "exchange, Eve scenario, QBER exercises, and comparison charts."
+    )
+    st.stop()
+
 tab_no_eve, tab_eve, tab_compare, tab_reality = st.tabs(
     ["No Eve", "Eve intercept-resend", "Compare and chart", "From classroom to real QKD"]
 )
@@ -266,14 +561,14 @@ with tab_no_eve:
         st.progress(len(no_eve.sifted_alice_key) / N_BITS, text=f"{len(no_eve.sifted_alice_key)} of 1,000 positions kept")
     st.markdown("#### First 30 transmitted positions")
     st.dataframe(sample_table(no_eve), hide_index=True, width="stretch", height=560)
-    with st.expander("5. Error estimation", expanded=True):
-        st.write(
-            f"The sifted keys differ at **{int(no_eve.sifted_errors.sum())}** positions. "
-            f"QBER = errors / sifted bits = {int(no_eve.sifted_errors.sum())} / "
-            f"{len(no_eve.sifted_alice_key)} = **{no_eve.qber:.2f}%**. With no Eve, all "
-            "simulated errors come from the selected channel noise."
-        )
-    detection_panel(no_eve.qber, threshold)
+    no_eve_qber_complete = qber_learning_panel(
+        no_eve,
+        threshold,
+        int(noise_percent),
+        int(seed),
+        "no_eve",
+        5,
+    )
 
 with tab_eve:
     st.subheader(
@@ -313,24 +608,40 @@ with tab_eve:
     st.markdown("#### First 30 transmitted positions, including Eve's actions")
     st.dataframe(sample_table(with_eve, include_eve=True), hide_index=True, width="stretch", height=560)
 
-    with st.expander("6. Error estimation and attribution", expanded=True):
-        total_errors = int(with_eve.sifted_errors.sum())
-        st.write(
-            f"The observed sifted-key QBER is **{total_errors} / "
-            f"{len(with_eve.sifted_alice_key)} = {with_eve.qber:.2f}%**. Because this is a "
-            "simulation, we can inspect the hidden causal record: "
-            f"**{with_eve.eve_attributed_errors}** final errors are attributable to Eve and "
-            f"**{with_eve.noise_attributed_errors}** to channel flips."
-        )
-        if with_eve.eve_errors_cancelled_by_noise:
-            st.caption(
-                f"An extra teaching subtlety: {with_eve.eve_errors_cancelled_by_noise} "
-                "Eve-induced error(s) were flipped back to the correct bit by channel noise. "
-                "Real Alice and Bob cannot label or causally separate individual errors."
+    eve_qber_complete = qber_learning_panel(
+        with_eve,
+        threshold,
+        int(noise_percent),
+        int(seed),
+        f"eve_{eve_count}",
+        6,
+    )
+
+    if eve_qber_complete:
+        with st.expander("8. Simulator-only error attribution", expanded=True):
+            total_errors = int(with_eve.sifted_errors.sum())
+            st.write(
+                f"The observed sifted-key QBER is **{total_errors} / "
+                f"{len(with_eve.sifted_alice_key)} = {with_eve.qber:.2f}%**. Because this is a "
+                "simulation, we can inspect the hidden causal record: "
+                f"**{with_eve.eve_attributed_errors}** final errors are attributable to Eve and "
+                f"**{with_eve.noise_attributed_errors}** to channel flips."
             )
-    detection_panel(with_eve.qber, threshold)
+            if with_eve.eve_errors_cancelled_by_noise:
+                st.caption(
+                    f"An extra teaching subtlety: {with_eve.eve_errors_cancelled_by_noise} "
+                    "Eve-induced error(s) were flipped back to the correct bit by channel noise. "
+                    "Real Alice and Bob cannot label or causally separate individual errors."
+                )
 
 with tab_compare:
+    if not (no_eve_qber_complete and eve_qber_complete):
+        st.info(
+            "Complete the QBER checkpoint in both the No Eve and Eve tabs to unlock "
+            "the comparison. This prevents the chart from revealing the answers."
+        )
+        st.stop()
+
     st.subheader("What changes when Eve listens?")
     comparison = pd.DataFrame(
         {

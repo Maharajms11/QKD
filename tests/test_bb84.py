@@ -4,10 +4,12 @@ import numpy as np
 
 from bb84 import (
     calculate_qber,
+    calculate_qber_from_counts,
     encode_photons,
     expected_qber,
     generate_bases,
     generate_bits,
+    predictable_measurement_bit,
     run_protocol,
 )
 
@@ -63,10 +65,22 @@ class BB84Tests(unittest.TestCase):
         errors, qber = calculate_qber(np.array([0, 1, 1, 0]), np.array([0, 0, 1, 1]))
         self.assertEqual(errors, 2)
         self.assertEqual(qber, 50.0)
+        self.assertEqual(calculate_qber_from_counts(2, 8), 25.0)
         self.assertEqual(expected_qber(1.0, 0.0), 25.0)
         self.assertAlmostEqual(expected_qber(0.0, 0.05), 5.0)
+
+    def test_guided_measurement_prediction(self):
+        self.assertEqual(predictable_measurement_bit(0, "+", "+"), 0)
+        self.assertEqual(predictable_measurement_bit(1, "x", "x"), 1)
+        self.assertIsNone(predictable_measurement_bit(0, "+", "x"))
+        self.assertIsNone(predictable_measurement_bit(1, "x", "+"))
+
+    def test_qber_count_validation(self):
+        with self.assertRaises(ValueError):
+            calculate_qber_from_counts(6, 5)
+        with self.assertRaises(ValueError):
+            calculate_qber_from_counts(-1, 5)
 
 
 if __name__ == "__main__":
     unittest.main()
-

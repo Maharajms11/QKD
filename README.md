@@ -5,6 +5,19 @@ An interactive, step-by-step Streamlit simulator for teaching BB84 with a
 scenarios, configurable channel noise, basis sifting, causal error inspection,
 QBER detection, and classroom charts.
 
+## Interactive learning workflow
+
+Before the simulator reveals the full exchange, students must work through the
+first five photons. For each photon they compare Alice's preparation basis with
+Bob's random measurement basis and predict either a definite bit or a genuinely
+random outcome. Incorrect answers receive progressively clearer hints and can be
+retried.
+
+After the remaining measurements are generated, students calculate the observed
+QBER from the sifted error count and decide whether the result exceeds their
+selected acceptance threshold. The interface explicitly distinguishes the
+channel's inherent error probability from the maximum accepted QBER.
+
 This is an idealised educational model, not a production QKD implementation.
 
 ## Run locally
