@@ -69,26 +69,26 @@ class TeachingInterfaceTests(unittest.TestCase):
             any("Checkpoint complete" in message.value for message in app.success)
         )
         checkpoint_labels = [expander.label for expander in app.expander]
-        self.assertIn("5. Student QBER checkpoint", checkpoint_labels)
         self.assertIn("6. Student QBER checkpoint", checkpoint_labels)
+        self.assertIn("7. Student QBER checkpoint", checkpoint_labels)
         self.assertEqual(
             sum(button.label == "Check my QBER" for button in app.button),
             2,
         )
 
-        sifted_counts = [
+        sample_counts = [
             int(metric.value.replace(",", "").replace(" bits", ""))
             for metric in app.metric
-            if metric.label == "Sifted key"
+            if metric.label == "Public test sample"
         ]
         error_counts = [
             int(metric.value.replace(",", ""))
             for metric in app.metric
-            if metric.label == "Sifted errors"
+            if metric.label == "Revealed errors"
         ]
         qbers = [
-            100.0 * errors / sifted
-            for errors, sifted in zip(error_counts, sifted_counts)
+            100.0 * errors / sample
+            for errors, sample in zip(error_counts, sample_counts)
         ]
         threshold = next(
             slider.value for slider in app.slider if slider.label == "Maximum accepted QBER"

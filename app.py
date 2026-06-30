@@ -18,6 +18,7 @@ from bb84 import (
     photon_state_labels,
     predictable_measurement_bit,
     run_protocol,
+    sample_sifted_key,
 )
 
 
@@ -190,7 +191,32 @@ def guided_measurement_lab(
     return False
 
 
-def sample_table(result, include_eve: bool = False) -> pd.DataFrame:
+def sampled_stream_indices(result, estimate) -> np.ndarray:
+    """Map public-sample positions from the sifted key to the original stream."""
+
+    return np.flatnonzero(result.sift_mask)[estimate.sample_indices]
+
+
+def public_sample_table(result, estimate) -> pd.DataFrame:
+    """Build the list of publicly compared bits that must be discarded."""
+
+    stream_indices = sampled_stream_indices(result, estimate)
+    return pd.DataFrame(
+        {
+            "Original stream position": stream_indices + 1,
+            "Alice reveals": estimate.sample_alice_bits,
+            "Bob reveals": estimate.sample_bob_bits,
+            "Error?": yes_no(estimate.sample_errors),
+            "After comparison": ["Discarded"] * len(stream_indices),
+        }
+    )
+
+
+def sample_table(
+    result,
+    estimate=None,
+    include_eve: bool = False,
+) -> pd.DataFrame:
     """Build the first-30-position audit trail shown to students."""
 
     n = min(SAMPLE_ROWS, len(result.alice_bits))
@@ -206,6 +232,10 @@ def sample_table(result, include_eve: bool = False) -> pd.DataFrame:
         "Alice basis": result.alice_bases[:n],
         "Encoded photon state": photon_state_labels(result.alice_states[:n]),
     }
+    if estimate is not None:
+        public_sample = np.zeros(len(result.alice_bits), dtype=bool)
+        public_sample[sampled_stream_indices(result, estimate)] = True
+        data["Selected for public test?"] = yes_no(public_sample[:n])
     if include_eve:
         intercepted = result.eve.intercepted[:n]
         data.update(
@@ -229,8 +259,13 @@ def sample_table(result, include_eve: bool = False) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def qber_sweep(channel_noise: float, base_seed: int, trials: int = 16) -> pd.DataFrame:
-    """Average repeated 1000-bit experiments for a readable teaching chart."""
+def qber_sweep(
+    channel_noise: float,
+    sample_fraction: float,
+    base_seed: int,
+    trials: int = 16,
+) -> pd.DataFrame:
+    """Average repeated sample-QBER estimates for a readable teaching chart."""
 
     records: list[dict[str, float | str]] = []
     for percentage in range(0, 101, 5):
@@ -246,7 +281,13 @@ def qber_sweep(channel_noise: float, base_seed: int, trials: int = 16) -> pd.Dat
                 round(N_BITS * percentage / 100),
                 np.random.default_rng(seed + 91_337),
             )
-            simulated_qbers.append(result.qber)
+            estimate = sample_sifted_key(
+                result.sifted_alice_key,
+                result.sifted_bob_key,
+                sample_fraction,
+                np.random.default_rng(seed + 48_271),
+            )
+            simulated_qbers.append(estimate.sample_qber)
         records.append(
             {
                 "Eve interception (%)": float(percentage),
@@ -264,54 +305,69 @@ def qber_sweep(channel_noise: float, base_seed: int, trials: int = 16) -> pd.Dat
     return pd.DataFrame(records)
 
 
-def metric_row(result, include_eve: bool = False, reveal_qber: bool = False) -> None:
+def metric_row(result, estimate, include_eve: bool = False) -> None:
     """Render the principal numbers for an exchange."""
 
-    columns = st.columns(6 if include_eve else 5)
+    columns = st.columns(7 if include_eve else 6)
     columns[0].metric("Transmitted", f"{len(result.alice_bits):,}")
     columns[1].metric("Basis matches", f"{int(result.sift_mask.sum()):,}")
     columns[2].metric("Sifted key", f"{len(result.sifted_alice_key):,} bits")
-    columns[3].metric("Sifted errors", f"{int(result.sifted_errors.sum()):,}")
-    columns[4].metric(
-        "Observed QBER",
-        f"{result.qber:.2f}%" if reveal_qber else "Calculate it below",
+    columns[3].metric("Public test sample", f"{len(estimate.sample_alice_bits):,} bits")
+    columns[4].metric("Revealed errors", f"{int(estimate.sample_errors.sum()):,}")
+    columns[5].metric(
+        "Sample QBER",
+        "Calculate it below",
     )
     if include_eve:
-        columns[5].metric("Eve intercepted", f"{int(result.eve.intercepted.sum()):,}")
+        columns[6].metric("Eve intercepted", f"{int(result.eve.intercepted.sum()):,}")
 
 
-def detection_panel(qber: float, threshold: float, step_number: int = 7) -> None:
+def detection_panel(
+    qber: float,
+    threshold: float,
+    candidate_key_bits: int,
+    step_number: int = 7,
+) -> None:
     """Apply the user-selected classroom abort rule."""
 
     with st.expander(f"{step_number}. QBER-based detection", expanded=True):
         st.write(
-            f"Alice and Bob compare a sample of their sifted key. This simulator "
-            f"compares the complete sifted key for visibility. The abort threshold is "
-            f"**{threshold:.1f}%**, and the observed QBER is **{qber:.2f}%**."
+            f"The publicly revealed sample has been discarded. The abort threshold is "
+            f"**{threshold:.1f}%**, and the estimated sample QBER is **{qber:.2f}%**."
         )
         if qber > threshold:
-            st.error("Eavesdropping or excessive channel disturbance detected: abort key.")
+            st.error(
+                "Eavesdropping or excessive channel disturbance detected: abort and "
+                "discard this entire exchange."
+            )
         else:
             st.success(
-                "QBER below threshold: proceed to error correction and privacy amplification."
+                f"QBER below threshold: the {candidate_key_bits:,} unrevealed candidate "
+                "bits proceed to error correction and privacy amplification."
             )
+        st.caption(
+            "Teaching simplification: this decision uses the sample percentage itself. "
+            "A real finite-key protocol applies a statistical confidence margin because "
+            "the unseen candidate key can have a different error rate from the sample."
+        )
 
 
 def qber_learning_panel(
-    result,
+    estimate,
     threshold: float,
     noise_percent: int,
+    sample_percent: int,
     seed: int,
     scenario_key: str,
     step_number: int,
 ) -> bool:
     """Require a QBER calculation and threshold decision before revealing the answer."""
 
-    error_count = int(result.sifted_errors.sum())
-    sifted_count = len(result.sifted_alice_key)
-    expected = calculate_qber_from_counts(error_count, sifted_count)
+    error_count = int(estimate.sample_errors.sum())
+    sample_count = len(estimate.sample_alice_bits)
+    expected = calculate_qber_from_counts(error_count, sample_count)
     signature = (
-        f"{scenario_key}_{seed}_{noise_percent}_{error_count}_{sifted_count}_"
+        f"{scenario_key}_{seed}_{noise_percent}_{sample_percent}_{error_count}_{sample_count}_"
         f"{threshold:.1f}"
     ).replace(".", "_")
     calculation_key = f"qber_calculation_correct_{signature}"
@@ -324,14 +380,14 @@ def qber_learning_panel(
     with st.expander(f"{step_number}. Student QBER checkpoint", expanded=True):
         st.info(
             f"Machine settings: **{noise_percent}% inherent channel error probability** "
-            f"and **{threshold:.1f}% maximum accepted QBER**. These are different: the "
-            "first creates background errors; the second is the accept/abort rule."
+            f"and **{threshold:.1f}% maximum accepted QBER**. Alice and Bob randomly "
+            f"selected **{sample_percent}% of the sifted key** for public testing."
         )
         st.write(
-            f"Alice and Bob found **{error_count} errors** among **{sifted_count} sifted "
-            "bits**. Calculate the observed quantum bit error rate."
+            f"They found **{error_count} errors** among the **{sample_count} publicly "
+            "compared sample bits**. Calculate the estimated quantum bit error rate."
         )
-        st.latex(r"\mathrm{QBER}(\%)=\frac{\text{number of errors}}{\text{sifted bits}}\times100")
+        st.latex(r"\mathrm{QBER}(\%)=\frac{\text{sample errors}}{\text{sample bits}}\times100")
 
         if not st.session_state[calculation_key]:
             learner_qber = st.number_input(
@@ -360,12 +416,12 @@ def qber_learning_panel(
                     if attempts == 1:
                         st.warning(
                             f"Not quite. Substitute the counts: {error_count} ÷ "
-                            f"{sifted_count} × 100. Try again."
+                            f"{sample_count} × 100. Try again."
                         )
                     elif attempts == 2:
-                        fraction = error_count / sifted_count if sifted_count else 0.0
+                        fraction = error_count / sample_count if sample_count else 0.0
                         st.warning(
-                            f"First, {error_count} ÷ {sifted_count} = {fraction:.4f}. "
+                            f"First, {error_count} ÷ {sample_count} = {fraction:.4f}. "
                             "Now convert that decimal to a percentage and try again."
                         )
                     else:
@@ -376,7 +432,8 @@ def qber_learning_panel(
             return False
 
         st.success(
-            f"Correct: {error_count} ÷ {sifted_count} × 100 = **{expected:.2f}%**."
+            f"Correct: {error_count} ÷ {sample_count} × 100 = **{expected:.2f}%**. "
+            f"All {sample_count} revealed sample bits are now discarded."
         )
 
         if not st.session_state[decision_key]:
@@ -415,7 +472,12 @@ def qber_learning_panel(
 
         st.success("Correct security decision.")
 
-    detection_panel(expected, threshold, step_number + 1)
+    detection_panel(
+        expected,
+        threshold,
+        len(estimate.remaining_alice_key),
+        step_number + 1,
+    )
     return True
 
 
@@ -459,6 +521,17 @@ with st.sidebar:
         format_func=lambda value: f"{value}%",
         help="Independent probability that a measured bit is flipped.",
     )
+    sample_percent = st.radio(
+        "Sifted key revealed for public testing",
+        options=[5, 10, 20, 25, 50],
+        index=2,
+        horizontal=True,
+        format_func=lambda value: f"{value}%",
+        help=(
+            "Alice and Bob compare this random sample to estimate QBER, then discard "
+            "every revealed sample bit."
+        ),
+    )
     eve_count = st.slider(
         "Photons Eve intercepts",
         min_value=0,
@@ -477,7 +550,7 @@ with st.sidebar:
     )
     st.caption(
         "The inherent error setting creates background errors. The QBER limit is the "
-        "separate accept/abort rule. Controls update both scenarios immediately."
+        "separate accept/abort rule. Public test bits are always discarded."
     )
 
 channel_noise = noise_percent / 100.0
@@ -497,6 +570,20 @@ with_eve = run_protocol(
     channel_noise,
     eve_count,
     np.random.default_rng(int(seed) + 20_003),
+)
+sample_fraction = sample_percent / 100.0
+sample_seed = int(seed) + 30_007
+no_eve_estimate = sample_sifted_key(
+    no_eve.sifted_alice_key,
+    no_eve.sifted_bob_key,
+    sample_fraction,
+    np.random.default_rng(sample_seed),
+)
+with_eve_estimate = sample_sifted_key(
+    with_eve.sifted_alice_key,
+    with_eve.sifted_bob_key,
+    sample_fraction,
+    np.random.default_rng(sample_seed),
 )
 
 st.subheader("The BB84 journey")
@@ -551,7 +638,7 @@ tab_no_eve, tab_eve, tab_compare, tab_reality = st.tabs(
 
 with tab_no_eve:
     st.subheader(f"Alice → noisy channel ({noise_percent}%) → Bob")
-    metric_row(no_eve)
+    metric_row(no_eve, no_eve_estimate)
     with st.expander("4. Basis sifting", expanded=True):
         st.write(
             "After all measurements, Alice and Bob publicly compare bases—but never reveal "
@@ -559,22 +646,45 @@ with tab_no_eve:
             "About half of 1,000 positions should survive."
         )
         st.progress(len(no_eve.sifted_alice_key) / N_BITS, text=f"{len(no_eve.sifted_alice_key)} of 1,000 positions kept")
-    st.markdown("#### First 30 transmitted positions")
-    st.dataframe(sample_table(no_eve), hide_index=True, width="stretch", height=560)
+    with st.expander("5. Random public test sample", expanded=True):
+        st.write(
+            f"Alice and Bob randomly select **{len(no_eve_estimate.sample_alice_bits)} of "
+            f"{len(no_eve.sifted_alice_key)} sifted bits** ({sample_percent}%). They "
+            "publicly reveal both values at these positions, count disagreements, and "
+            "permanently discard every revealed bit."
+        )
+        st.dataframe(
+            public_sample_table(no_eve, no_eve_estimate),
+            hide_index=True,
+            width="stretch",
+            height=300,
+        )
+        st.caption(
+            f"After sampling, {len(no_eve_estimate.remaining_alice_key)} unrevealed "
+            "candidate-key bits remain. Their exact error rate is not known yet."
+        )
+    st.markdown("#### First 30 transmitted positions (simulator audit view)")
+    st.dataframe(
+        sample_table(no_eve, no_eve_estimate),
+        hide_index=True,
+        width="stretch",
+        height=560,
+    )
     no_eve_qber_complete = qber_learning_panel(
-        no_eve,
+        no_eve_estimate,
         threshold,
         int(noise_percent),
+        int(sample_percent),
         int(seed),
         "no_eve",
-        5,
+        6,
     )
 
 with tab_eve:
     st.subheader(
         f"Alice → Eve intercepts {eve_count:,} photons ({100 * eve_count / N_BITS:.1f}%) → Bob"
     )
-    metric_row(with_eve, include_eve=True)
+    metric_row(with_eve, with_eve_estimate, include_eve=True)
     intercepted_sifted = int(np.count_nonzero(with_eve.sift_mask & with_eve.eve.intercepted))
     eve_matches = int(with_eve.eve.eve_basis_matches.sum())
     expected_eve_errors = intercepted_sifted * 0.25
@@ -605,20 +715,44 @@ with tab_eve:
         )
         st.progress(len(with_eve.sifted_alice_key) / N_BITS, text=f"{len(with_eve.sifted_alice_key)} of 1,000 positions kept")
 
+    with st.expander("6. Random public test sample", expanded=True):
+        st.write(
+            f"Alice and Bob randomly select **{len(with_eve_estimate.sample_alice_bits)} "
+            f"of {len(with_eve.sifted_alice_key)} sifted bits** ({sample_percent}%). "
+            "They reveal and compare these values publicly, then discard all sampled bits."
+        )
+        st.dataframe(
+            public_sample_table(with_eve, with_eve_estimate),
+            hide_index=True,
+            width="stretch",
+            height=300,
+        )
+        st.caption(
+            f"After sampling, {len(with_eve_estimate.remaining_alice_key)} unrevealed "
+            "candidate-key bits remain. Eve hears the sample, but those bits will never "
+            "be used as secret key material."
+        )
+
     st.markdown("#### First 30 transmitted positions, including Eve's actions")
-    st.dataframe(sample_table(with_eve, include_eve=True), hide_index=True, width="stretch", height=560)
+    st.dataframe(
+        sample_table(with_eve, with_eve_estimate, include_eve=True),
+        hide_index=True,
+        width="stretch",
+        height=560,
+    )
 
     eve_qber_complete = qber_learning_panel(
-        with_eve,
+        with_eve_estimate,
         threshold,
         int(noise_percent),
+        int(sample_percent),
         int(seed),
         f"eve_{eve_count}",
-        6,
+        7,
     )
 
     if eve_qber_complete:
-        with st.expander("8. Simulator-only error attribution", expanded=True):
+        with st.expander("9. Simulator-only error attribution", expanded=True):
             total_errors = int(with_eve.sifted_errors.sum())
             st.write(
                 f"The observed sifted-key QBER is **{total_errors} / "
@@ -646,33 +780,47 @@ with tab_compare:
     comparison = pd.DataFrame(
         {
             "Scenario": ["No Eve", f"Eve: {100 * eve_count / N_BITS:.1f}% intercepted"],
-            "Sifted key length": [len(no_eve.sifted_alice_key), len(with_eve.sifted_alice_key)],
-            "Observed QBER (%)": [no_eve.qber, with_eve.qber],
-            "Total sifted errors": [int(no_eve.sifted_errors.sum()), int(with_eve.sifted_errors.sum())],
+            "Sifted bits": [len(no_eve.sifted_alice_key), len(with_eve.sifted_alice_key)],
+            "Public sample bits": [
+                len(no_eve_estimate.sample_alice_bits),
+                len(with_eve_estimate.sample_alice_bits),
+            ],
+            "Candidate key bits": [
+                len(no_eve_estimate.remaining_alice_key),
+                len(with_eve_estimate.remaining_alice_key),
+            ],
+            "Sample QBER (%)": [
+                no_eve_estimate.sample_qber,
+                with_eve_estimate.sample_qber,
+            ],
+            "Sample errors": [
+                int(no_eve_estimate.sample_errors.sum()),
+                int(with_eve_estimate.sample_errors.sum()),
+            ],
         }
     )
     st.dataframe(comparison, hide_index=True, width="stretch")
 
     left, right = st.columns(2)
     with left:
-        st.markdown("#### Sifted key length")
+        st.markdown("#### Candidate key after public sampling")
         length_chart = (
             alt.Chart(comparison)
             .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
             .encode(
                 x=alt.X("Scenario:N", title=None),
-                y=alt.Y("Sifted key length:Q", scale=alt.Scale(domain=[0, N_BITS])),
+                y=alt.Y("Candidate key bits:Q", scale=alt.Scale(domain=[0, N_BITS])),
                 color=alt.Color("Scenario:N", legend=None),
-                tooltip=["Scenario", "Sifted key length"],
+                tooltip=["Scenario", "Candidate key bits", "Public sample bits"],
             )
         )
         st.altair_chart(length_chart, width="stretch")
         st.caption(
-            "Eve usually does not change the sifted length: sifting depends on Alice's and "
-            "Bob's announced bases. Eve reveals herself mainly by increasing errors."
+            "Publicly tested bits are removed in both scenarios. Eve usually changes the "
+            "sample error rate rather than the number of surviving basis matches."
         )
     with right:
-        st.markdown("#### Final errors: noise versus Eve")
+        st.markdown("#### Hidden full-key errors: noise versus Eve")
         error_data = pd.DataFrame(
             {
                 "Cause": ["Channel noise", "Eve intercept-resend"],
@@ -695,8 +843,8 @@ with tab_compare:
             "total disturbance and use a security proof rather than identifying each cause."
         )
 
-    st.markdown("#### QBER versus Eve interception percentage")
-    sweep = qber_sweep(channel_noise, int(seed))
+    st.markdown("#### Estimated sample QBER versus Eve interception percentage")
+    sweep = qber_sweep(channel_noise, sample_fraction, int(seed))
     lines = (
         alt.Chart(sweep)
         .mark_line(point=True)
@@ -721,9 +869,10 @@ with tab_compare:
     )
     st.altair_chart(lines + threshold_rule, width="stretch")
     st.caption(
-        "Blue averages 16 independent 1,000-bit exchanges at each point. The orange line is "
-        "the ideal expectation, including the selected channel noise; the dashed red line is "
-        "the current abort threshold. Random finite samples fluctuate around the expectation."
+        f"Blue averages 16 independent 1,000-bit exchanges using a {sample_percent}% public "
+        "sample at each point. The orange line is the ideal expectation, including the "
+        "selected channel noise; the dashed red line is the current abort threshold. "
+        "Smaller finite samples fluctuate more widely around the expectation."
     )
 
 with tab_reality:

@@ -13,9 +13,12 @@ Bob's random measurement basis and predict either a definite bit or a genuinely
 random outcome. Incorrect answers receive progressively clearer hints and can be
 retried.
 
-After the remaining measurements are generated, students calculate the observed
-QBER from the sifted error count and decide whether the result exceeds their
-selected acceptance threshold. The interface explicitly distinguishes the
+After the remaining measurements are generated, Alice and Bob randomly select a
+student-configurable percentage of their sifted key for public comparison.
+Students calculate the sample QBER and decide whether it exceeds their selected
+acceptance threshold. Every revealed test bit is discarded, and the interface
+shows the smaller unrevealed candidate key that would continue to error
+correction and privacy amplification. It also explicitly distinguishes the
 channel's inherent error probability from the maximum accepted QBER.
 
 This is an idealised educational model, not a production QKD implementation.

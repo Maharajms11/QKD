@@ -11,6 +11,7 @@ from bb84 import (
     generate_bits,
     predictable_measurement_bit,
     run_protocol,
+    sample_sifted_key,
 )
 
 
@@ -80,6 +81,36 @@ class BB84Tests(unittest.TestCase):
             calculate_qber_from_counts(6, 5)
         with self.assertRaises(ValueError):
             calculate_qber_from_counts(-1, 5)
+
+    def test_parameter_estimation_discards_revealed_sample(self):
+        alice = np.array([0, 1, 0, 1, 1, 0, 0, 1], dtype=np.int8)
+        bob = np.array([0, 1, 1, 1, 1, 0, 1, 1], dtype=np.int8)
+        first = sample_sifted_key(alice, bob, 0.25, np.random.default_rng(7))
+        second = sample_sifted_key(alice, bob, 0.25, np.random.default_rng(7))
+
+        np.testing.assert_array_equal(first.sample_indices, second.sample_indices)
+        self.assertEqual(len(first.sample_indices), 2)
+        self.assertEqual(len(first.remaining_alice_key), 6)
+        self.assertEqual(
+            len(first.sample_alice_bits) + len(first.remaining_alice_key),
+            len(alice),
+        )
+        np.testing.assert_array_equal(
+            np.delete(alice, first.sample_indices), first.remaining_alice_key
+        )
+        np.testing.assert_array_equal(
+            np.delete(bob, first.sample_indices), first.remaining_bob_key
+        )
+        self.assertEqual(
+            first.sample_qber,
+            100.0 * int(first.sample_errors.sum()) / len(first.sample_errors),
+        )
+
+    def test_parameter_estimation_validates_fraction(self):
+        with self.assertRaises(ValueError):
+            sample_sifted_key(np.array([0]), np.array([0]), 0.0)
+        with self.assertRaises(ValueError):
+            sample_sifted_key(np.array([0]), np.array([0]), 1.0)
 
 
 if __name__ == "__main__":

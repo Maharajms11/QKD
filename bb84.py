@@ -62,6 +62,19 @@ class ProtocolResult:
     noise_flips_in_sifted_key: int
 
 
+@dataclass(frozen=True)
+class ParameterEstimationResult:
+    """Public test sample and the unrevealed candidate key that remains."""
+
+    sample_indices: np.ndarray
+    sample_alice_bits: np.ndarray
+    sample_bob_bits: np.ndarray
+    sample_errors: np.ndarray
+    sample_qber: float
+    remaining_alice_key: np.ndarray
+    remaining_bob_key: np.ndarray
+
+
 def _rng(rng: np.random.Generator | None = None) -> np.random.Generator:
     """Return the supplied generator, or create a fresh one."""
 
@@ -157,6 +170,58 @@ def calculate_qber_from_counts(error_count: int, sifted_count: int) -> float:
     if sifted_count == 0:
         return 0.0
     return 100.0 * error_count / sifted_count
+
+
+def sample_sifted_key(
+    alice_key: np.ndarray,
+    bob_key: np.ndarray,
+    sample_fraction: float,
+    rng: np.random.Generator | None = None,
+) -> ParameterEstimationResult:
+    """Reveal a random sifted-key sample and remove it from the candidate key.
+
+    ``sample_indices`` are positions within the sifted key, not positions in the
+    original transmitted stream. At least one bit is sampled when the sifted
+    key is non-empty, while at least one bit is retained when possible.
+    """
+
+    alice_key = np.asarray(alice_key, dtype=np.int8)
+    bob_key = np.asarray(bob_key, dtype=np.int8)
+    if alice_key.shape != bob_key.shape:
+        raise ValueError("sifted keys must have the same shape")
+    if not 0.0 < sample_fraction < 1.0:
+        raise ValueError("sample_fraction must be between 0 and 1")
+
+    sifted_count = len(alice_key)
+    if sifted_count == 0:
+        sample_indices = np.array([], dtype=np.int64)
+    elif sifted_count == 1:
+        sample_indices = np.array([0], dtype=np.int64)
+    else:
+        sample_count = min(
+            sifted_count - 1,
+            max(1, round(sifted_count * sample_fraction)),
+        )
+        sample_indices = np.sort(
+            _rng(rng).choice(sifted_count, size=sample_count, replace=False)
+        )
+
+    sample_mask = np.zeros(sifted_count, dtype=bool)
+    sample_mask[sample_indices] = True
+    sample_alice = alice_key[sample_mask]
+    sample_bob = bob_key[sample_mask]
+    sample_errors = sample_alice != sample_bob
+    _, sample_qber = calculate_qber(sample_alice, sample_bob)
+
+    return ParameterEstimationResult(
+        sample_indices=sample_indices,
+        sample_alice_bits=sample_alice,
+        sample_bob_bits=sample_bob,
+        sample_errors=sample_errors,
+        sample_qber=sample_qber,
+        remaining_alice_key=alice_key[~sample_mask],
+        remaining_bob_key=bob_key[~sample_mask],
+    )
 
 
 def simulate_eve_intercept_resend(
